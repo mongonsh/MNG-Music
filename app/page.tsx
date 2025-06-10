@@ -17,7 +17,7 @@ const orbitron = Orbitron({
 
 export default function MusicVisualizer() {
   const [isPlaying, setIsPlaying] = useState(false)
-  const [audioFile, setAudioFile] = useState<File | null>(null)
+  const [audioFile, setAudioFile] = useState<string>("/videoplayback.mp4")
   const [volume, setVolume] = useState([0.7])
   const [audioData, setAudioData] = useState<number[]>(new Array(128).fill(0))
   const [bassLevel, setBassLevel] = useState(0)
@@ -29,7 +29,7 @@ export default function MusicVisualizer() {
   const audioContextRef = useRef<AudioContext | null>(null)
   const analyserRef = useRef<AnalyserNode | null>(null)
   const sourceRef = useRef<MediaElementAudioSourceNode | null>(null)
-  const animationRef = useRef<number>()
+  const animationRef = useRef<number | undefined>(undefined)
 
   useEffect(() => {
     return () => {
@@ -45,12 +45,19 @@ export default function MusicVisualizer() {
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (file && audioRef.current) {
-      setAudioFile(file)
       const url = URL.createObjectURL(file)
+      setAudioFile(url)
       audioRef.current.src = url
       setupAudioContext()
     }
   }
+
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.src = audioFile
+      setupAudioContext()
+    }
+  }, [])
 
   const setupAudioContext = () => {
     if (!audioRef.current) return
@@ -400,7 +407,7 @@ export default function MusicVisualizer() {
                 <div className="text-center">
                   <Upload className="mx-auto h-8 w-8 text-purple-400 mb-2" />
                   <span className="text-sm text-gray-300 font-light font-orbitron tracking-wide">
-                    {audioFile ? audioFile.name : "Choose audio file"}
+                    {audioFile}
                   </span>
                 </div>
                 <input type="file" accept="audio/*" onChange={handleFileUpload} className="hidden" />
@@ -414,7 +421,6 @@ export default function MusicVisualizer() {
             <div className="space-y-4">
               <Button
                 onClick={togglePlayPause}
-                disabled={!audioFile}
                 className="w-full bg-gradient-to-r from-slate-700 to-blue-700 hover:from-slate-600 hover:to-blue-600 font-orbitron font-light tracking-wider"
               >
                 {isPlaying ? <Pause className="mr-2 h-4 w-4" /> : <Play className="mr-2 h-4 w-4" />}
