@@ -2,34 +2,385 @@
 
 import type React from "react"
 
-import { useState, useRef, useEffect } from "react"
+import { useState, useRef, useEffect, Suspense } from "react"
 import { Button } from "@/components/ui/button"
-import { Card } from "@/components/ui/card"
 import { Slider } from "@/components/ui/slider"
-import { Play, Pause, Upload, Volume2 } from "lucide-react"
-import { Orbitron } from "next/font/google"
+import { Play, Pause, Upload, Volume2, Maximize2, Settings, Globe, Zap, Sparkles, Orbit } from "lucide-react"
+import { Space_Grotesk as SpaceGrotesk } from "next/font/google"
+import { cn } from "@/lib/utils"
+import { motion, AnimatePresence } from "framer-motion"
+import { Canvas, useFrame, useThree } from "@react-three/fiber"
+import { OrbitControls, Stars, Environment, Box, Torus, Plane, PerspectiveCamera } from "@react-three/drei"
+import * as THREE from "three"
 
-const orbitron = Orbitron({
+const spaceGrotesk = SpaceGrotesk({
   subsets: ["latin"],
-  weight: [ "400", "500", "600", "700", "800", "900"],
-  variable: "--font-orbitron",
+  variable: "--font-space-grotesk",
 })
 
-export default function MusicVisualizer() {
+// 3D Audio Visualizer Components
+function AudioSphere({ audioData, bassLevel, midLevel, trebleLevel }: any) {
+  const meshRef = useRef<THREE.Mesh>(null)
+  const materialRef = useRef<THREE.ShaderMaterial>(null)
+
+  useFrame((state) => {
+    if (meshRef.current && materialRef.current) {
+      meshRef.current.rotation.x += 0.01 + bassLevel * 0.02
+      meshRef.current.rotation.y += 0.005 + midLevel * 0.01
+
+      // Update shader uniforms
+      materialRef.current.uniforms.time.value = state.clock.elapsedTime
+      materialRef.current.uniforms.bassLevel.value = bassLevel
+      materialRef.current.uniforms.midLevel.value = midLevel
+      materialRef.current.uniforms.trebleLevel.value = trebleLevel
+    }
+  })
+
+  const vertexShader = `
+    varying vec2 vUv;
+    varying vec3 vPosition;
+    uniform float time;
+    uniform float bassLevel;
+    
+    void main() {
+      vUv = uv;
+      vPosition = position;
+      
+      vec3 newPosition = position;
+      float noise = sin(position.x * 10.0 + time) * sin(position.y * 10.0 + time) * sin(position.z * 10.0 + time);
+      newPosition += normal * noise * 0.1 * (1.0 + bassLevel * 2.0);
+      
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(newPosition, 1.0);
+    }
+  `
+
+  const fragmentShader = `
+    varying vec2 vUv;
+    varying vec3 vPosition;
+    uniform float time;
+    uniform float bassLevel;
+    uniform float midLevel;
+    uniform float trebleLevel;
+    
+    void main() {
+      vec3 color1 = vec3(0.3, 0.6, 1.0); // Blue
+      vec3 color2 = vec3(0.6, 0.3, 1.0); // Purple
+      vec3 color3 = vec3(0.0, 1.0, 1.0); // Cyan
+      
+      float mixer = sin(vPosition.x * 5.0 + time) * 0.5 + 0.5;
+      vec3 finalColor = mix(color1, color2, mixer * bassLevel);
+      finalColor = mix(finalColor, color3, trebleLevel);
+      
+      float alpha = 0.7 + midLevel * 0.3;
+      gl_FragColor = vec4(finalColor, alpha);
+    }
+  `
+
+  return (
+    <mesh ref={meshRef} scale={[2, 2, 2]}>
+      <sphereGeometry args={[1, 64, 64]} />
+      <shaderMaterial
+        ref={materialRef}
+        vertexShader={vertexShader}
+        fragmentShader={fragmentShader}
+        uniforms={{
+          time: { value: 0 },
+          bassLevel: { value: 0 },
+          midLevel: { value: 0 },
+          trebleLevel: { value: 0 },
+        }}
+        transparent
+        side={THREE.DoubleSide}
+      />
+    </mesh>
+  )
+}
+
+function FrequencyBars({ audioData }: any) {
+  const groupRef = useRef<THREE.Group>(null)
+
+  useFrame(() => {
+    if (groupRef.current) {
+      groupRef.current.rotation.y += 0.01
+    }
+  })
+
+  return (
+    <group ref={groupRef}>
+      {audioData.slice(0, 64).map((value: number, index: number) => {
+        const height = (value / 255) * 5 + 0.1
+        const angle = (index / 64) * Math.PI * 2
+        const radius = 4
+        const x = Math.cos(angle) * radius
+        const z = Math.sin(angle) * radius
+
+        return (
+          <Box key={index} position={[x, height / 2, z]} scale={[0.1, height, 0.1]} rotation={[0, angle, 0]}>
+            <meshStandardMaterial
+              color={new THREE.Color().setHSL((index / 64) * 0.5 + 0.5, 1, 0.5)}
+              emissive={new THREE.Color().setHSL((index / 64) * 0.5 + 0.5, 1, 0.2)}
+            />
+          </Box>
+        )
+      })}
+    </group>
+  )
+}
+
+function ParticleField({ bassLevel, midLevel, trebleLevel }: any) {
+  const pointsRef = useRef<THREE.Points>(null)
+  const particleCount = 1000
+
+  const positions = new Float32Array(particleCount * 3)
+  const colors = new Float32Array(particleCount * 3)
+
+  for (let i = 0; i < particleCount; i++) {
+    positions[i * 3] = (Math.random() - 0.5) * 30
+    positions[i * 3 + 1] = (Math.random() - 0.5) * 30
+    positions[i * 3 + 2] = (Math.random() - 0.5) * 30
+
+    colors[i * 3] = Math.random()
+    colors[i * 3 + 1] = Math.random()
+    colors[i * 3 + 2] = Math.random()
+  }
+
+  useFrame((state) => {
+    if (pointsRef.current) {
+      pointsRef.current.rotation.x += 0.001 + bassLevel * 0.01
+      pointsRef.current.rotation.y += 0.002 + midLevel * 0.01
+
+      const positions = pointsRef.current.geometry.attributes.position.array as Float32Array
+      for (let i = 0; i < particleCount; i++) {
+        const i3 = i * 3
+        positions[i3 + 1] += Math.sin(state.clock.elapsedTime + i * 0.01) * 0.01 * (1 + trebleLevel)
+      }
+      pointsRef.current.geometry.attributes.position.needsUpdate = true
+    }
+  })
+
+  return (
+    <points ref={pointsRef}>
+      <bufferGeometry>
+        <bufferAttribute args={[positions, 3]} attach="attributes-position" count={particleCount} />
+        <bufferAttribute args={[colors, 3]} attach="attributes-color" count={particleCount} />
+      </bufferGeometry>
+      <pointsMaterial size={0.2} vertexColors transparent opacity={0.8} />
+    </points>
+  )
+}
+
+function FloatingPlatforms({ universe }: { universe: string }) {
+  const groupRef = useRef<THREE.Group>(null)
+
+  useFrame((state) => {
+    if (groupRef.current) {
+      groupRef.current.rotation.y += 0.005
+      groupRef.current.position.y = Math.sin(state.clock.elapsedTime * 0.5) * 0.5
+    }
+  })
+
+  const platformConfigs = {
+    cosmic: [
+      { pos: [5, 2, 0], color: "#4dabf7", size: [2, 0.2, 2] },
+      { pos: [-5, -1, 3], color: "#845ef7", size: [1.5, 0.2, 1.5] },
+      { pos: [0, 3, -5], color: "#22d3ee", size: [2.5, 0.2, 2.5] },
+    ],
+    neon: [
+      { pos: [4, 1, 2], color: "#ff0080", size: [1.8, 0.3, 1.8] },
+      { pos: [-3, -2, -1], color: "#00ff80", size: [2.2, 0.3, 2.2] },
+      { pos: [1, 4, -4], color: "#8000ff", size: [1.6, 0.3, 1.6] },
+    ],
+    quantum: [
+      { pos: [6, 0, 1], color: "#ffd700", size: [2, 0.1, 2] },
+      { pos: [-4, 2, -2], color: "#ff6b35", size: [1.8, 0.1, 1.8] },
+      { pos: [2, -3, 4], color: "#7209b7", size: [2.4, 0.1, 2.4] },
+    ],
+    matrix: [
+      { pos: [3, 1, 1], color: "#00ff00", size: [1.5, 0.2, 1.5] },
+      { pos: [-2, -1, -3], color: "#00aa00", size: [2, 0.2, 2] },
+      { pos: [0, 2, -2], color: "#00cc00", size: [1.8, 0.2, 1.8] },
+    ],
+  }
+
+  const platforms = platformConfigs[universe as keyof typeof platformConfigs] || platformConfigs.cosmic
+
+  return (
+    <group ref={groupRef}>
+      {platforms.map((platform, index) => (
+        <Box
+          key={index}
+          position={platform.pos as [number, number, number]}
+          scale={platform.size as [number, number, number]}
+        >
+          <meshStandardMaterial
+            color={platform.color}
+            emissive={platform.color}
+            emissiveIntensity={0.3}
+            transparent
+            opacity={0.8}
+          />
+        </Box>
+      ))}
+    </group>
+  )
+}
+
+function WaveformRings({ audioData, bassLevel }: any) {
+  const groupRef = useRef<THREE.Group>(null)
+
+  useFrame((state) => {
+    if (groupRef.current) {
+      groupRef.current.rotation.z += 0.01
+    }
+  })
+
+  return (
+    <group ref={groupRef}>
+      {Array.from({ length: 5 }, (_, i) => (
+        <Torus key={i} position={[0, 0, 0]} args={[3 + i * 1.5, 0.05, 16, 100]} rotation={[Math.PI / 2, 0, i * 0.2]}>
+          <meshStandardMaterial
+            color={new THREE.Color().setHSL(i * 0.1 + 0.5, 1, 0.5)}
+            emissive={new THREE.Color().setHSL(i * 0.1 + 0.5, 1, 0.2)}
+            emissiveIntensity={0.2 + bassLevel * 0.5}
+            transparent
+            opacity={0.6}
+          />
+        </Torus>
+      ))}
+    </group>
+  )
+}
+
+function UniverseEnvironment({ universe, audioData, bassLevel, midLevel, trebleLevel }: any) {
+  const { scene } = useThree()
+
+  useEffect(() => {
+    const fogConfigs = {
+      cosmic: { color: "#0a1128", near: 10, far: 50 },
+      neon: { color: "#1a0a2e", near: 8, far: 40 },
+      quantum: { color: "#2d1b69", near: 12, far: 60 },
+      matrix: { color: "#001100", near: 5, far: 35 },
+    }
+
+    const config = fogConfigs[universe as keyof typeof fogConfigs] || fogConfigs.cosmic
+    scene.fog = new THREE.Fog(config.color, config.near, config.far)
+  }, [universe, scene])
+
+  return (
+    <>
+      {universe === "cosmic" && (
+        <>
+          <Stars radius={100} depth={50} count={3000} factor={4} saturation={0} fade speed={1} />
+          <Environment preset="night" />
+          <ambientLight intensity={0.2} />
+          <pointLight position={[10, 10, 10]} intensity={1} color="#4dabf7" />
+          <pointLight position={[-10, -10, -10]} intensity={0.5} color="#845ef7" />
+          <directionalLight position={[0, 10, 0]} intensity={0.5} color="#22d3ee" />
+        </>
+      )}
+
+      {universe === "neon" && (
+        <>
+          <ambientLight intensity={0.1} />
+          <pointLight position={[0, 10, 0]} intensity={2} color="#ff0080" />
+          <pointLight position={[10, 0, 10]} intensity={1.5} color="#00ff80" />
+          <pointLight position={[-10, 0, -10]} intensity={1.5} color="#8000ff" />
+          <Plane args={[100, 100]} rotation={[-Math.PI / 2, 0, 0]} position={[0, -5, 0]}>
+            <meshStandardMaterial color="#1a0a2e" />
+          </Plane>
+          {/* Neon grid lines */}
+          {Array.from({ length: 10 }, (_, i) => (
+            <Box key={i} position={[i * 4 - 20, -4.9, 0]} scale={[0.1, 0.1, 40]}>
+              <meshStandardMaterial color="#ff0080" emissive="#ff0080" emissiveIntensity={0.5} />
+            </Box>
+          ))}
+        </>
+      )}
+
+      {universe === "quantum" && (
+        <>
+          <ambientLight intensity={0.3} />
+          <directionalLight position={[5, 5, 5]} intensity={1} color="#ffd700" />
+          <pointLight position={[0, 0, 0]} intensity={2} color="#ff6b35" />
+          <WaveformRings audioData={audioData} bassLevel={bassLevel} />
+        </>
+      )}
+
+      {universe === "matrix" && (
+        <>
+          <ambientLight intensity={0.1} />
+          <pointLight position={[0, 10, 0]} intensity={1} color="#00ff00" />
+          <Plane args={[100, 100]} rotation={[-Math.PI / 2, 0, 0]} position={[0, -5, 0]}>
+            <meshStandardMaterial color="#001100" />
+          </Plane>
+          {/* Matrix code blocks */}
+          {Array.from({ length: 20 }, (_, i) => (
+            <Box
+              key={i}
+              position={[(Math.random() - 0.5) * 30, Math.random() * 10, (Math.random() - 0.5) * 30]}
+              scale={[0.2, 0.2, 0.2]}
+            >
+              <meshStandardMaterial color="#00ff00" emissive="#00ff00" emissiveIntensity={0.5} />
+            </Box>
+          ))}
+        </>
+      )}
+
+      <AudioSphere audioData={audioData} bassLevel={bassLevel} midLevel={midLevel} trebleLevel={trebleLevel} />
+      <FrequencyBars audioData={audioData} />
+      <ParticleField bassLevel={bassLevel} midLevel={midLevel} trebleLevel={trebleLevel} />
+      <FloatingPlatforms universe={universe} />
+    </>
+  )
+}
+
+function Scene3D({ universe, audioData, bassLevel, midLevel, trebleLevel }: any) {
+  return (
+    <Canvas className="w-full h-full" gl={{ antialias: true, alpha: false }}>
+      <PerspectiveCamera makeDefault position={[0, 5, 15]} />
+      <OrbitControls enablePan={true} enableZoom={true} enableRotate={true} autoRotate autoRotateSpeed={0.5} />
+
+      <Suspense fallback={null}>
+        <UniverseEnvironment
+          universe={universe}
+          audioData={audioData}
+          bassLevel={bassLevel}
+          midLevel={midLevel}
+          trebleLevel={trebleLevel}
+        />
+      </Suspense>
+    </Canvas>
+  )
+}
+
+export default function MetaverseMusicVisualizer() {
   const [isPlaying, setIsPlaying] = useState(false)
-  const [audioFile, setAudioFile] = useState<string>("/videoplayback.mp4")
+  const [audioFile, setAudioFile] = useState("/videoplayback.mp4")
   const [volume, setVolume] = useState([0.7])
-  const [audioData, setAudioData] = useState<number[]>(new Array(128).fill(0))
+  const [audioData, setAudioData] = useState<number[]>(new Array(256).fill(0))
   const [bassLevel, setBassLevel] = useState(0)
   const [midLevel, setMidLevel] = useState(0)
   const [trebleLevel, setTrebleLevel] = useState(0)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+  const [showControls, setShowControls] = useState(true)
+  const [activeUniverse, setActiveUniverse] = useState<"cosmic" | "neon" | "quantum" | "matrix">("cosmic")
+  const [isMobile, setIsMobile] = useState(false)
 
   const audioRef = useRef<HTMLAudioElement>(null)
-  const canvasRef = useRef<HTMLCanvasElement>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
   const analyserRef = useRef<AnalyserNode | null>(null)
   const sourceRef = useRef<MediaElementAudioSourceNode | null>(null)
   const animationRef = useRef<number | undefined>(undefined)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(window.innerWidth < 768)
+    }
+    handleResize()
+    window.addEventListener("resize", handleResize)
+    return () => window.removeEventListener("resize", handleResize)
+  }, [])
 
   useEffect(() => {
     return () => {
@@ -45,19 +396,12 @@ export default function MusicVisualizer() {
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (file && audioRef.current) {
+      setAudioFile(file)
       const url = URL.createObjectURL(file)
-      setAudioFile(url)
       audioRef.current.src = url
       setupAudioContext()
     }
   }
-
-  useEffect(() => {
-    if (audioRef.current) {
-      audioRef.current.src = audioFile
-      setupAudioContext()
-    }
-  }, [])
 
   const setupAudioContext = () => {
     if (!audioRef.current) return
@@ -67,7 +411,7 @@ export default function MusicVisualizer() {
       analyserRef.current = audioContextRef.current.createAnalyser()
       sourceRef.current = audioContextRef.current.createMediaElementSource(audioRef.current)
 
-      analyserRef.current.fftSize = 256
+      analyserRef.current.fftSize = 1024
       sourceRef.current.connect(analyserRef.current)
       analyserRef.current.connect(audioContextRef.current.destination)
 
@@ -78,11 +422,7 @@ export default function MusicVisualizer() {
   }
 
   const startVisualization = () => {
-    if (!analyserRef.current || !canvasRef.current) return
-
-    const canvas = canvasRef.current
-    const ctx = canvas.getContext("2d")
-    if (!ctx) return
+    if (!analyserRef.current) return
 
     const bufferLength = analyserRef.current.frequencyBinCount
     const dataArray = new Uint8Array(bufferLength)
@@ -90,272 +430,19 @@ export default function MusicVisualizer() {
     const animate = () => {
       analyserRef.current!.getByteFrequencyData(dataArray)
 
-      // Calculate frequency ranges
       const bass = dataArray.slice(0, 10).reduce((a, b) => a + b, 0) / 10
-      const mid = dataArray.slice(10, 50).reduce((a, b) => a + b, 0) / 40
-      const treble = dataArray.slice(50, 128).reduce((a, b) => a + b, 0) / 78
+      const mid = dataArray.slice(10, 100).reduce((a, b) => a + b, 0) / 90
+      const treble = dataArray.slice(100, 256).reduce((a, b) => a + b, 0) / 156
 
       setBassLevel(bass / 255)
       setMidLevel(mid / 255)
       setTrebleLevel(treble / 255)
       setAudioData(Array.from(dataArray))
 
-      drawVisualization(ctx, canvas, dataArray, bass, mid, treble)
       animationRef.current = requestAnimationFrame(animate)
     }
 
     animate()
-  }
-
-  const drawVisualization = (
-    ctx: CanvasRenderingContext2D,
-    canvas: HTMLCanvasElement,
-    dataArray: Uint8Array,
-    bass: number,
-    mid: number,
-    treble: number,
-  ) => {
-    const width = canvas.width
-    const height = canvas.height
-    const time = Date.now() * 0.001
-
-    // Clear with fade effect for trails
-    ctx.fillStyle = "rgba(0, 0, 0, 0.1)"
-    ctx.fillRect(0, 0, width, height)
-
-    // Create dynamic cosmic background
-    const bgGradient = ctx.createRadialGradient(
-      width / 2 + Math.sin(time * 0.5) * 100,
-      height / 2 + Math.cos(time * 0.3) * 80,
-      0,
-      width / 2,
-      height / 2,
-      Math.max(width, height) / 1.5,
-    )
-    bgGradient.addColorStop(0, `rgba(25, 25, 112, ${0.3 + bass / 1000})`)
-    bgGradient.addColorStop(0.4, `rgba(72, 61, 139, ${0.2 + mid / 1500})`)
-    bgGradient.addColorStop(0.8, `rgba(15, 23, 42, ${0.1 + treble / 2000})`)
-    bgGradient.addColorStop(1, "rgba(0, 0, 0, 0.9)")
-
-    ctx.globalCompositeOperation = "screen"
-    ctx.fillStyle = bgGradient
-    ctx.fillRect(0, 0, width, height)
-    ctx.globalCompositeOperation = "source-over"
-
-    // Advanced particle system
-    const particleCount = Math.floor(50 + (bass + mid + treble) / 10)
-    for (let i = 0; i < particleCount; i++) {
-      const angle = (i / particleCount) * Math.PI * 2 + time * 0.5
-      const radius = 100 + Math.sin(time + i * 0.1) * 50 + bass * 2
-      const x = width / 2 + Math.cos(angle) * radius
-      const y = height / 2 + Math.sin(angle) * radius
-
-      const intensity = dataArray[i % dataArray.length] / 255
-      const size = 1 + intensity * 4
-
-      // Create particle with glow
-      const particleGradient = ctx.createRadialGradient(x, y, 0, x, y, size * 3)
-      particleGradient.addColorStop(0, `rgba(200, 220, 255, ${intensity})`)
-      particleGradient.addColorStop(0.5, `rgba(100, 150, 255, ${intensity * 0.5})`)
-      particleGradient.addColorStop(1, "rgba(50, 100, 200, 0)")
-
-      ctx.fillStyle = particleGradient
-      ctx.beginPath()
-      ctx.arc(x, y, size * 3, 0, Math.PI * 2)
-      ctx.fill()
-    }
-
-    // 3D-style frequency bars with perspective
-    const barCount = 64
-    const barWidth = width / barCount
-    const perspective = height * 0.3
-
-    for (let i = 0; i < barCount; i++) {
-      const dataIndex = Math.floor((i / barCount) * dataArray.length)
-      const barHeight = (dataArray[dataIndex] / 255) * height * 0.7
-
-      // Calculate 3D position
-      const x = i * barWidth
-      const z = Math.sin(time + i * 0.1) * 20 + barHeight * 0.1
-      const scale = perspective / (perspective + z)
-
-      const x3d = x * scale + (width * (1 - scale)) / 2
-      const barWidth3d = barWidth * scale
-      const barHeight3d = barHeight * scale
-
-      // Create metallic gradient
-      const barGradient = ctx.createLinearGradient(x3d, height, x3d, height - barHeight3d)
-      const hue = 200 + (i / barCount) * 60
-      const intensity = dataArray[dataIndex] / 255
-
-      barGradient.addColorStop(0, `hsla(${hue}, 70%, 20%, 0.9)`)
-      barGradient.addColorStop(0.3, `hsla(${hue}, 80%, 50%, ${0.8 + intensity * 0.2})`)
-      barGradient.addColorStop(0.7, `hsla(${hue}, 90%, 70%, ${0.6 + intensity * 0.4})`)
-      barGradient.addColorStop(1, `hsla(${hue}, 100%, 90%, ${0.9 + intensity * 0.1})`)
-
-      ctx.fillStyle = barGradient
-      ctx.fillRect(x3d, height - barHeight3d, barWidth3d - 1, barHeight3d)
-
-      // Add reflection
-      ctx.globalAlpha = 0.3
-      const reflectionGradient = ctx.createLinearGradient(x3d, height, x3d, height + barHeight3d * 0.5)
-      reflectionGradient.addColorStop(0, `hsla(${hue}, 80%, 50%, 0.3)`)
-      reflectionGradient.addColorStop(1, `hsla(${hue}, 80%, 50%, 0)`)
-      ctx.fillStyle = reflectionGradient
-      ctx.fillRect(x3d, height, barWidth3d - 1, barHeight3d * 0.5)
-      ctx.globalAlpha = 1
-    }
-
-    // Advanced waveform with multiple layers
-    const drawWaveform = (offset: number, color: string, lineWidth: number, alpha: number) => {
-      ctx.globalAlpha = alpha
-      ctx.strokeStyle = color
-      ctx.lineWidth = lineWidth
-      ctx.shadowColor = color
-      ctx.shadowBlur = lineWidth * 2
-
-      ctx.beginPath()
-      for (let i = 0; i < dataArray.length; i++) {
-        const x = (i / dataArray.length) * width
-        const y =
-          height / 2 + Math.sin((i / dataArray.length) * Math.PI * 4 + time * 2) * (dataArray[i] / 255) * 100 + offset
-
-        if (i === 0) ctx.moveTo(x, y)
-        else ctx.lineTo(x, y)
-      }
-      ctx.stroke()
-      ctx.shadowBlur = 0
-      ctx.globalAlpha = 1
-    }
-
-    drawWaveform(-20, "#e2e8f0", 3, 0.8)
-    drawWaveform(0, "#cbd5e1", 2, 0.6)
-    drawWaveform(20, "#94a3b8", 1, 0.4)
-
-    // Dynamic energy orbs
-    const centerX = width / 2
-    const centerY = height / 2
-
-    // Bass orb
-    if (bass > 30) {
-      const bassRadius = 20 + (bass / 255) * 80
-      const bassGradient = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, bassRadius)
-      bassGradient.addColorStop(0, `rgba(59, 130, 246, ${bass / 500})`)
-      bassGradient.addColorStop(0.5, `rgba(29, 78, 216, ${bass / 800})`)
-      bassGradient.addColorStop(1, "rgba(29, 78, 216, 0)")
-
-      ctx.fillStyle = bassGradient
-      ctx.beginPath()
-      ctx.arc(centerX, centerY, bassRadius, 0, Math.PI * 2)
-      ctx.fill()
-    }
-
-    // Lightning effects for high frequencies
-    if (treble > 100) {
-      ctx.strokeStyle = `rgba(241, 245, 249, ${treble / 255})`
-      ctx.lineWidth = 2
-      ctx.shadowColor = "#f1f5f9"
-      ctx.shadowBlur = 10
-
-      for (let i = 0; i < 5; i++) {
-        const startAngle = (i / 5) * Math.PI * 2 + time * 3
-        const endAngle = startAngle + Math.PI * 0.1
-        const radius = 150 + treble * 0.5
-
-        const startX = centerX + Math.cos(startAngle) * radius
-        const startY = centerY + Math.sin(startAngle) * radius
-        const endX = centerX + Math.cos(endAngle) * (radius + 50)
-        const endY = centerY + Math.sin(endAngle) * (radius + 50)
-
-        ctx.beginPath()
-        ctx.moveTo(startX, startY)
-        ctx.lineTo(endX, endY)
-        ctx.stroke()
-      }
-      ctx.shadowBlur = 0
-    }
-
-    // Spiral galaxy effect
-    const spiralArms = 3
-    const spiralRadius = 200
-
-    for (let arm = 0; arm < spiralArms; arm++) {
-      ctx.strokeStyle = `rgba(148, 163, 184, ${0.3 + mid / 1000})`
-      ctx.lineWidth = 1
-      ctx.beginPath()
-
-      for (let i = 0; i < 100; i++) {
-        const t = i / 100
-        const angle = arm * ((Math.PI * 2) / spiralArms) + t * Math.PI * 4 + time * 0.5
-        const r = t * spiralRadius * (1 + mid / 500)
-        const x = centerX + Math.cos(angle) * r
-        const y = centerY + Math.sin(angle) * r
-
-        if (i === 0) ctx.moveTo(x, y)
-        else ctx.lineTo(x, y)
-
-        // Add stars along spiral
-        if (i % 10 === 0 && dataArray[i] > 80) {
-          ctx.fillStyle = `rgba(241, 245, 249, ${dataArray[i] / 255})`
-          ctx.beginPath()
-          ctx.arc(x, y, 1 + (dataArray[i] / 255) * 2, 0, Math.PI * 2)
-          ctx.fill()
-        }
-      }
-      ctx.stroke()
-    }
-
-    // Frequency spectrum analyzer with professional styling
-    const spectrumHeight = 100
-    const spectrumY = height - spectrumHeight - 20
-
-    // Background for spectrum
-    ctx.fillStyle = "rgba(15, 23, 42, 0.8)"
-    ctx.fillRect(20, spectrumY, width - 40, spectrumHeight)
-
-    // Spectrum bars
-    const spectrumBarWidth = (width - 40) / dataArray.length
-    for (let i = 0; i < dataArray.length; i++) {
-      const barHeight = (dataArray[i] / 255) * (spectrumHeight - 10)
-      const x = 20 + i * spectrumBarWidth
-      const y = spectrumY + spectrumHeight - barHeight - 5
-
-      const spectrumGradient = ctx.createLinearGradient(x, y + barHeight, x, y)
-      spectrumGradient.addColorStop(0, "rgba(59, 130, 246, 0.3)")
-      spectrumGradient.addColorStop(0.5, "rgba(147, 197, 253, 0.6)")
-      spectrumGradient.addColorStop(1, "rgba(219, 234, 254, 0.9)")
-
-      ctx.fillStyle = spectrumGradient
-      ctx.fillRect(x, y, spectrumBarWidth - 1, barHeight)
-    }
-
-    // Floating geometric shapes
-    const shapeCount = 8
-    for (let i = 0; i < shapeCount; i++) {
-      const angle = (i / shapeCount) * Math.PI * 2 + time * 0.3
-      const distance = 300 + Math.sin(time + i) * 100
-      const x = centerX + Math.cos(angle) * distance
-      const y = centerY + Math.sin(angle) * distance
-      const size = 10 + (dataArray[i * 16] / 255) * 20
-      const rotation = time + i
-
-      ctx.save()
-      ctx.translate(x, y)
-      ctx.rotate(rotation)
-
-      // Draw diamond shape
-      ctx.strokeStyle = `rgba(148, 163, 184, ${0.6 + dataArray[i * 16] / 500})`
-      ctx.lineWidth = 2
-      ctx.beginPath()
-      ctx.moveTo(0, -size)
-      ctx.lineTo(size, 0)
-      ctx.lineTo(0, size)
-      ctx.lineTo(-size, 0)
-      ctx.closePath()
-      ctx.stroke()
-
-      ctx.restore()
-    }
   }
 
   const togglePlayPause = () => {
@@ -379,128 +466,295 @@ export default function MusicVisualizer() {
     }
   }
 
+  const toggleFullscreen = () => {
+    if (!containerRef.current) return
+
+    if (!isFullscreen) {
+      if (containerRef.current.requestFullscreen) {
+        containerRef.current.requestFullscreen()
+      }
+    } else {
+      if (document.exitFullscreen) {
+        document.exitFullscreen()
+      }
+    }
+    setIsFullscreen(!isFullscreen)
+  }
+
+  const universeConfigs = {
+    cosmic: {
+      name: "Cosmic Nebula",
+      icon: Globe,
+      description: "Deep space with nebulae and stars",
+      gradient: "from-blue-600 to-purple-600",
+    },
+    neon: {
+      name: "Neon City",
+      icon: Zap,
+      description: "Cyberpunk cityscape with neon lights",
+      gradient: "from-pink-600 to-cyan-600",
+    },
+    quantum: {
+      name: "Quantum Realm",
+      icon: Orbit,
+      description: "Subatomic particle visualization",
+      gradient: "from-yellow-600 to-orange-600",
+    },
+    matrix: {
+      name: "Digital Matrix",
+      icon: Sparkles,
+      description: "Binary code rain environment",
+      gradient: "from-green-600 to-emerald-600",
+    },
+  }
+
   return (
-    <div className={`min-h-screen bg-gradient-to-br from-slate-900 via-blue-950 to-black p-4 ${orbitron.variable}`}>
-      <div className="max-w-6xl mx-auto">
+    <div
+      ref={containerRef}
+      className={cn(
+        "min-h-screen bg-gradient-to-br from-[#050714] via-[#0a1128] to-[#050714] text-white",
+        spaceGrotesk.variable,
+        isFullscreen && "fixed inset-0 z-50",
+      )}
+    >
+      <div className="max-w-7xl mx-auto px-2 py-4 md:p-6 h-full flex flex-col">
         {/* Header */}
-        <div className="text-center mb-8">
-          <h1 className="text-7xl font-extralight tracking-[0.2em] bg-gradient-to-r from-slate-200 via-blue-100 to-slate-300 bg-clip-text text-transparent mb-4 font-orbitron">
-            MNG music
-          </h1>
-          <p className="text-xl font-light tracking-wide text-gray-300 font-orbitron">
-            Experience music like never before with real-time audio visualization
-          </p>
-        </div>
+        {(!isFullscreen || showControls) && (
+          <motion.div
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5 }}
+            className="text-center mb-4 md:mb-8"
+          >
+            <h1 className="text-4xl md:text-6xl font-light tracking-tight bg-gradient-to-r from-blue-400 via-purple-400 to-cyan-400 bg-clip-text text-transparent mb-2 md:mb-4 font-space-grotesk">
+              METAVERSE VISUALIZER
+            </h1>
+            <p className="text-sm md:text-lg font-light tracking-wide text-blue-200/80 font-space-grotesk">
+              Experience music across infinite dimensions
+            </p>
+          </motion.div>
+        )}
 
-        {/* Main Visualization Canvas */}
-        <Card className="mb-8 p-0 overflow-hidden bg-black/50 border-slate-600/30 shadow-2xl shadow-blue-900/20">
-          <canvas ref={canvasRef} width={1200} height={600} className="w-full h-auto max-h-[600px]" />
-        </Card>
+        {/* Main 3D Visualization */}
+        <div className="relative flex-grow flex flex-col">
+          <div
+            className="relative w-full flex-grow bg-[#050714]/80 rounded-lg overflow-hidden shadow-[0_0_50px_rgba(77,171,247,0.15)] border border-blue-900/30"
+            onMouseEnter={() => setShowControls(true)}
+            onMouseLeave={() => isFullscreen && setShowControls(false)}
+          >
+            <Scene3D
+              universe={activeUniverse}
+              audioData={audioData}
+              bassLevel={bassLevel}
+              midLevel={midLevel}
+              trebleLevel={trebleLevel}
+            />
 
-        {/* Controls */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-          {/* File Upload */}
-          <Card className="p-6 bg-slate-900/40 border-slate-600/30 backdrop-blur-sm">
-            <h3 className="text-lg font-light tracking-wider text-white mb-4 font-orbitron">UPLOAD MUSIC</h3>
-            <div className="space-y-4">
-              <label className="flex items-center justify-center w-full h-32 border-2 border-dashed border-purple-500/50 rounded-lg cursor-pointer hover:border-purple-400 transition-colors">
-                <div className="text-center">
-                  <Upload className="mx-auto h-8 w-8 text-purple-400 mb-2" />
-                  <span className="text-sm text-gray-300 font-light font-orbitron tracking-wide">
-                    {audioFile}
+            {/* Overlay controls */}
+            <AnimatePresence>
+              {showControls && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.3 }}
+                  className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/80 to-transparent"
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Button
+                        onClick={togglePlayPause}
+                        disabled={!audioFile}
+                        size="sm"
+                        variant="ghost"
+                        className="bg-white/10 hover:bg-white/20 text-white rounded-full w-10 h-10 p-0"
+                      >
+                        {isPlaying ? <Pause size={18} /> : <Play size={18} />}
+                      </Button>
+
+                      {!isMobile && (
+                        <div className="flex items-center gap-2 w-32">
+                          <Volume2 className="h-4 w-4 text-blue-300" />
+                          <Slider
+                            value={volume}
+                            onValueChange={handleVolumeChange}
+                            max={1}
+                            step={0.01}
+                            className="flex-1"
+                          />
+                        </div>
+                      )}
+
+                      {audioFile && (
+                        <span className="text-xs md:text-sm text-blue-200 font-light truncate max-w-[150px] md:max-w-xs">
+                          {audioFile.name}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <Button
+                        onClick={toggleFullscreen}
+                        size="sm"
+                        variant="ghost"
+                        className="bg-white/10 hover:bg-white/20 text-white rounded-full w-8 h-8 p-0"
+                      >
+                        <Maximize2 size={16} />
+                      </Button>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* Universe selector overlay */}
+            <div className="absolute top-4 left-4 flex flex-col gap-2">
+              {Object.entries(universeConfigs).map(([key, config]) => {
+                const IconComponent = config.icon
+                return (
+                  <Button
+                    key={key}
+                    onClick={() => setActiveUniverse(key as any)}
+                    size="sm"
+                    variant="ghost"
+                    className={cn(
+                      "w-10 h-10 p-0 rounded-full transition-all",
+                      activeUniverse === key
+                        ? `bg-gradient-to-r ${config.gradient} text-white shadow-lg`
+                        : "bg-white/10 hover:bg-white/20 text-white/70",
+                    )}
+                    title={config.name}
+                  >
+                    <IconComponent size={18} />
+                  </Button>
+                )
+              })}
+            </div>
+
+            {/* Current universe info */}
+            <div className="absolute top-4 right-4 bg-black/60 backdrop-blur-md rounded-lg p-3 border border-blue-900/50">
+              <div className="text-blue-300 font-medium text-sm">{universeConfigs[activeUniverse].name}</div>
+              <div className="text-gray-400 text-xs">{universeConfigs[activeUniverse].description}</div>
+            </div>
+          </div>
+
+          {/* Controls Panel */}
+          {(!isFullscreen || showControls) && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, delay: 0.2 }}
+              className="mt-4 grid grid-cols-1 md:grid-cols-4 gap-3 md:gap-6"
+            >
+              {/* File Upload */}
+              <div className="bg-[#0a1128]/80 backdrop-blur-sm rounded-lg border border-blue-900/30 p-4 md:p-5 shadow-lg">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-base md:text-lg font-light text-blue-300 font-space-grotesk">AUDIO</h3>
+                  <Upload className="h-4 w-4 text-blue-400" />
+                </div>
+                <label className="flex items-center justify-center w-full h-16 border border-dashed border-blue-500/50 rounded-lg cursor-pointer hover:border-blue-400 transition-colors bg-blue-900/10">
+                  <span className="text-xs text-blue-200 font-light font-space-grotesk text-center px-2">
+                    {audioFile ? audioFile.name : "Choose audio file"}
                   </span>
-                </div>
-                <input type="file" accept="audio/*" onChange={handleFileUpload} className="hidden" />
-              </label>
-            </div>
-          </Card>
-
-          {/* Playback Controls */}
-          <Card className="p-6 bg-slate-900/40 border-slate-600/30 backdrop-blur-sm">
-            <h3 className="text-lg font-light tracking-wider text-white mb-4 font-orbitron">PLAYBACK</h3>
-            <div className="space-y-4">
-              <Button
-                onClick={togglePlayPause}
-                className="w-full bg-gradient-to-r from-slate-700 to-blue-700 hover:from-slate-600 hover:to-blue-600 font-orbitron font-light tracking-wider"
-              >
-                {isPlaying ? <Pause className="mr-2 h-4 w-4" /> : <Play className="mr-2 h-4 w-4" />}
-                {isPlaying ? "PAUSE" : "PLAY"}
-              </Button>
-
-              <div className="flex items-center space-x-2">
-                <Volume2 className="h-4 w-4 text-gray-400" />
-                <Slider value={volume} onValueChange={handleVolumeChange} max={1} step={0.1} className="flex-1" />
+                  <input type="file" accept="audio/*" onChange={handleFileUpload} className="hidden" />
+                </label>
               </div>
-            </div>
-          </Card>
 
-          {/* Frequency Analysis */}
-          <Card className="p-6 bg-slate-900/40 border-slate-600/30 backdrop-blur-sm">
-            <h3 className="text-lg font-light tracking-wider text-white mb-4 font-orbitron">FREQUENCY ANALYSIS</h3>
-            <div className="space-y-3">
-              <div>
-                <div className="flex justify-between text-sm text-gray-400 mb-1 font-orbitron font-extralight tracking-wide">
-                  <span>BASS</span>
-                  <span>{Math.round(bassLevel * 100)}%</span>
+              {/* Universe Selection */}
+              <div className="bg-[#0a1128]/80 backdrop-blur-sm rounded-lg border border-blue-900/30 p-4 md:p-5 shadow-lg">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-base md:text-lg font-light text-blue-300 font-space-grotesk">UNIVERSE</h3>
+                  <Globe className="h-4 w-4 text-blue-400" />
                 </div>
-                <div className="w-full bg-gray-700 rounded-full h-2">
-                  <div
-                    className="bg-gradient-to-r from-slate-600 to-blue-600 h-2 rounded-full transition-all duration-100"
-                    style={{ width: `${bassLevel * 100}%` }}
-                  />
+                <div className="grid grid-cols-2 gap-2">
+                  {Object.entries(universeConfigs).map(([key, config]) => (
+                    <button
+                      key={key}
+                      onClick={() => setActiveUniverse(key as any)}
+                      className={cn(
+                        "p-2 rounded-md text-xs font-light transition-colors",
+                        activeUniverse === key
+                          ? `bg-gradient-to-r ${config.gradient} text-white`
+                          : "bg-blue-900/20 text-blue-300/70 hover:bg-blue-900/30",
+                      )}
+                    >
+                      {config.name.split(" ")[0]}
+                    </button>
+                  ))}
                 </div>
               </div>
 
-              <div>
-                <div className="flex justify-between text-sm text-gray-400 mb-1 font-orbitron font-extralight tracking-wide">
-                  <span>MID</span>
-                  <span>{Math.round(midLevel * 100)}%</span>
+              {/* Playback Controls */}
+              <div className="bg-[#0a1128]/80 backdrop-blur-sm rounded-lg border border-blue-900/30 p-4 md:p-5 shadow-lg">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-base md:text-lg font-light text-blue-300 font-space-grotesk">PLAYBACK</h3>
+                  <Volume2 className="h-4 w-4 text-blue-400" />
                 </div>
-                <div className="w-full bg-gray-700 rounded-full h-2">
-                  <div
-                    className="bg-gradient-to-r from-blue-500 to-slate-400 h-2 rounded-full transition-all duration-100"
-                    style={{ width: `${midLevel * 100}%` }}
-                  />
-                </div>
-              </div>
-
-              <div>
-                <div className="flex justify-between text-sm text-gray-400 mb-1 font-orbitron font-extralight tracking-wide">
-                  <span>TREBLE</span>
-                  <span>{Math.round(trebleLevel * 100)}%</span>
-                </div>
-                <div className="w-full bg-gray-700 rounded-full h-2">
-                  <div
-                    className="bg-gradient-to-r from-slate-300 to-slate-100 h-2 rounded-full transition-all duration-100"
-                    style={{ width: `${trebleLevel * 100}%` }}
-                  />
+                <div className="space-y-3">
+                  <Button
+                    onClick={togglePlayPause}
+                    disabled={!audioFile}
+                    className="w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white font-light text-sm"
+                  >
+                    {isPlaying ? <Pause className="mr-2 h-4 w-4" /> : <Play className="mr-2 h-4 w-4" />}
+                    {isPlaying ? "PAUSE" : "PLAY"}
+                  </Button>
+                  <div className="flex items-center space-x-2">
+                    <Volume2 className="h-3 w-3 text-blue-400" />
+                    <Slider value={volume} onValueChange={handleVolumeChange} max={1} step={0.01} className="flex-1" />
+                  </div>
                 </div>
               </div>
-            </div>
-          </Card>
-        </div>
 
-        {/* Features */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          <Card className="p-4 bg-slate-900/40 border-slate-500/30 text-center backdrop-blur-sm">
-            <div className="text-2xl font-extralight text-slate-300 mb-2 font-orbitron tracking-wider">REAL-TIME</div>
-            <div className="text-sm text-slate-400 font-orbitron font-extralight tracking-wide">Audio Analysis</div>
-          </Card>
+              {/* Frequency Analysis */}
+              <div className="bg-[#0a1128]/80 backdrop-blur-sm rounded-lg border border-blue-900/30 p-4 md:p-5 shadow-lg">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-base md:text-lg font-light text-blue-300 font-space-grotesk">FREQUENCY</h3>
+                  <Settings className="h-4 w-4 text-blue-400" />
+                </div>
+                <div className="space-y-3">
+                  <div>
+                    <div className="flex justify-between text-xs text-gray-400 mb-1 font-light">
+                      <span>BASS</span>
+                      <span>{Math.round(bassLevel * 100)}%</span>
+                    </div>
+                    <div className="w-full bg-blue-900/30 rounded-full h-2 overflow-hidden">
+                      <div
+                        className="bg-gradient-to-r from-blue-500 to-blue-400 h-2 rounded-full transition-all duration-100"
+                        style={{ width: `${bassLevel * 100}%` }}
+                      />
+                    </div>
+                  </div>
 
-          <Card className="p-4 bg-slate-900/40 border-blue-500/30 text-center backdrop-blur-sm">
-            <div className="text-2xl font-extralight text-blue-300 mb-2 font-orbitron tracking-wider">256 FFT</div>
-            <div className="text-sm text-slate-400 font-orbitron font-extralight tracking-wide">Frequency Bins</div>
-          </Card>
+                  <div>
+                    <div className="flex justify-between text-xs text-gray-400 mb-1 font-light">
+                      <span>MID</span>
+                      <span>{Math.round(midLevel * 100)}%</span>
+                    </div>
+                    <div className="w-full bg-blue-900/30 rounded-full h-2 overflow-hidden">
+                      <div
+                        className="bg-gradient-to-r from-purple-500 to-purple-400 h-2 rounded-full transition-all duration-100"
+                        style={{ width: `${midLevel * 100}%` }}
+                      />
+                    </div>
+                  </div>
 
-          <Card className="p-4 bg-slate-900/40 border-slate-400/30 text-center backdrop-blur-sm">
-            <div className="text-2xl font-extralight text-slate-200 mb-2 font-orbitron tracking-wider">60 FPS</div>
-            <div className="text-sm text-slate-400 font-orbitron font-extralight tracking-wide">Smooth Animation</div>
-          </Card>
-
-          <Card className="p-4 bg-slate-900/40 border-blue-400/30 text-center backdrop-blur-sm">
-            <div className="text-2xl font-extralight text-blue-200 mb-2 font-orbitron tracking-wider">MULTI-LAYER</div>
-            <div className="text-sm text-slate-400 font-orbitron font-extralight tracking-wide">Visualization</div>
-          </Card>
+                  <div>
+                    <div className="flex justify-between text-xs text-gray-400 mb-1 font-light">
+                      <span>TREBLE</span>
+                      <span>{Math.round(trebleLevel * 100)}%</span>
+                    </div>
+                    <div className="w-full bg-blue-900/30 rounded-full h-2 overflow-hidden">
+                      <div
+                        className="bg-gradient-to-r from-cyan-500 to-cyan-400 h-2 rounded-full transition-all duration-100"
+                        style={{ width: `${trebleLevel * 100}%` }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          )}
         </div>
 
         <audio ref={audioRef} crossOrigin="anonymous" />

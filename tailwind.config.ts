@@ -20,13 +20,7 @@ const config: Config = {
     },
     extend: {
       fontFamily: {
-        orbitron: ["var(--font-orbitron)", "monospace"],
-      },
-      fontWeight: {
-        extralight: "200",
-      },
-      letterSpacing: {
-        widest: "0.25em",
+        "space-grotesk": ["var(--font-space-grotesk)", "sans-serif"],
       },
       colors: {
         border: "hsl(var(--border))",
