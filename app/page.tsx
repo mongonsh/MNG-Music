@@ -355,7 +355,7 @@ function Scene3D({ universe, audioData, bassLevel, midLevel, trebleLevel }: any)
 
 export default function MetaverseMusicVisualizer() {
   const [isPlaying, setIsPlaying] = useState(false)
-  const [audioFile, setAudioFile] = useState("/videoplayback.mp4")
+  const [audioFile, setAudioFile] = useState<{ name: string; url: string }>({ name: "videoplayback.mp4", url: "/videoplayback.mp4" })
   const [volume, setVolume] = useState([0.7])
   const [audioData, setAudioData] = useState<number[]>(new Array(256).fill(0))
   const [bassLevel, setBassLevel] = useState(0)
@@ -396,8 +396,8 @@ export default function MetaverseMusicVisualizer() {
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (file && audioRef.current) {
-      setAudioFile(file)
       const url = URL.createObjectURL(file)
+      setAudioFile({ name: file.name, url })
       audioRef.current.src = url
       setupAudioContext()
     }
@@ -507,6 +507,13 @@ export default function MetaverseMusicVisualizer() {
       gradient: "from-green-600 to-emerald-600",
     },
   }
+
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.src = audioFile.url
+      setupAudioContext()
+    }
+  }, [])
 
   return (
     <div
